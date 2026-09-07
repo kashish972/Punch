@@ -33,6 +33,39 @@ const DURATIONS = [
   { label: "9h", minutes: 540 },
 ];
 
+/** States QStash will not move away from — safe to stop polling. */
+const TERMINAL_STATES = new Set(["DELIVERED", "ERROR", "FAILED", "CANCELED"]);
+
+const POLL_INTERVAL_MS = 5_000;
+const POLL_LIMIT_MS = 3 * 60_000;
+
+type StatusPayload = {
+  error?: string;
+  state?: string;
+  summary?: string;
+  url?: string;
+  found?: boolean;
+};
+
+function describe(data: StatusPayload): { ok: boolean; message: string } {
+  const state = data.state ?? (data.found === false ? "PENDING" : "UNKNOWN");
+  const parts = [`${state} — ${data.summary ?? ""}`.trim()];
+  if (data.error) parts.push(`(${data.error})`);
+  if (state === "DELIVERED") parts.push("Confirm in Keka.");
+  return {
+    ok: state !== "ERROR" && state !== "FAILED",
+    message: parts.join(" "),
+  };
+}
+
+async function fetchStatus(messageId: string): Promise<StatusPayload & { httpOk: boolean }> {
+  const res = await fetch(`/api/schedule/status?messageId=${encodeURIComponent(messageId)}`, {
+    cache: "no-store",
+  });
+  const data = (await res.json()) as StatusPayload;
+  return { ...data, httpOk: res.ok };
+}
+
 function decodeToken(token: string): TokenInfo | null {
   const parts = token.trim().replace(/^Bearer\s+/i, "").split(".");
   if (parts.length !== 3) return null;
@@ -106,37 +139,47 @@ export default function Home() {
     return new Date(schedule.fireAt).getTime() - now.getTime();
   }, [schedule, now]);
 
-  // The countdown hitting zero only means the timer elapsed here. Whether the
-  // punch actually happened is something only QStash can tell us, so ask it.
+  // The countdown hitting zero only means the timer elapsed *here*. QStash may
+  // take a few seconds more to actually deliver, so poll until it reaches a
+  // state it will not move away from rather than reporting the first reading.
   useEffect(() => {
     if (remaining === null || remaining > 0 || !schedule) return;
     const messageId = schedule.messageId;
     setSchedule(null);
     localStorage.removeItem(SCHEDULE_KEY);
-    setStatus({ ok: true, message: "Timer elapsed — checking whether it was delivered…" });
+    setStatus({ ok: true, message: "Timer elapsed — waiting for QStash to deliver…" });
 
-    void (async () => {
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      if (cancelled) return;
       try {
-        const res = await fetch(`/api/schedule/status?messageId=${encodeURIComponent(messageId)}`);
-        const data = (await res.json()) as {
-          error?: string;
-          state?: string;
-          summary?: string;
-          error_?: string;
-        } & { error?: string };
-        if (!res.ok) {
+        const data = await fetchStatus(messageId);
+        if (cancelled) return;
+        if (!data.httpOk) {
           setStatus({ ok: false, message: data.error ?? "Could not check delivery status." });
           return;
         }
-        const delivered = data.state === "DELIVERED";
-        setStatus({
-          ok: delivered,
-          message: `${data.state ?? "UNKNOWN"} — ${data.summary ?? ""} Confirm in Keka.`,
-        });
+        const described = describe(data);
+        const settled = data.state !== undefined && TERMINAL_STATES.has(data.state);
+        const timedOut = Date.now() - startedAt > POLL_LIMIT_MS;
+
+        if (settled || timedOut) {
+          setStatus(described);
+          return;
+        }
+        setStatus({ ok: true, message: `${described.message} Still waiting…` });
+        window.setTimeout(poll, POLL_INTERVAL_MS);
       } catch (err) {
-        setStatus({ ok: false, message: (err as Error).message });
+        if (!cancelled) setStatus({ ok: false, message: (err as Error).message });
       }
-    })();
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+    };
   }, [remaining, schedule]);
 
   const saveToken = useCallback((value: string) => {
@@ -218,23 +261,10 @@ export default function Home() {
   const checkStatus = useCallback(async () => {
     if (!schedule) return;
     try {
-      const res = await fetch(
-        `/api/schedule/status?messageId=${encodeURIComponent(schedule.messageId)}`,
-      );
-      const data = (await res.json()) as {
-        error?: string;
-        state?: string;
-        summary?: string;
-        url?: string;
-      };
+      const data = await fetchStatus(schedule.messageId);
       setStatus(
-        res.ok
-          ? {
-              ok: data.state !== "ERROR" && data.state !== "FAILED",
-              message: `${data.state ?? "UNKNOWN"} — ${data.summary ?? ""}${
-                data.url ? ` (callback: ${data.url})` : ""
-              }`,
-            }
+        data.httpOk
+          ? describe(data)
           : { ok: false, message: data.error ?? "Could not check status." },
       );
     } catch (err) {
