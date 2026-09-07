@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { seal } from "@/lib/crypto";
 import { normalizeToken, tokenExpiryMs } from "@/lib/keka";
-import { callbackUrl, qstashClient } from "@/lib/qstash";
+import { bypassHeaders, callbackUrl, qstashClient } from "@/lib/qstash";
 
 /** Guard rails: at least a minute out, at most a working day and a half. */
 const MIN_MINUTES = 1;
@@ -68,6 +68,7 @@ export async function POST(request: Request) {
       body: { token: seal(token), note: body.note ?? "", scheduledFor: fireAt },
       notBefore: Math.floor(fireAt / 1000),
       retries: 3,
+      headers: bypassHeaders(),
     });
 
     return NextResponse.json({

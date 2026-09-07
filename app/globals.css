@@ -392,3 +392,8 @@ h1 {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.schedActions {
+  display: flex;
+  gap: 10px;
+}

@@ -106,14 +106,38 @@ export default function Home() {
     return new Date(schedule.fireAt).getTime() - now.getTime();
   }, [schedule, now]);
 
-  // Once the fire time passes, QStash has done its job; stop showing a timer.
+  // The countdown hitting zero only means the timer elapsed here. Whether the
+  // punch actually happened is something only QStash can tell us, so ask it.
   useEffect(() => {
-    if (remaining !== null && remaining <= 0) {
-      setSchedule(null);
-      localStorage.removeItem(SCHEDULE_KEY);
-      setStatus({ ok: true, message: "Auto clock-out time reached — it fired on the server." });
-    }
-  }, [remaining]);
+    if (remaining === null || remaining > 0 || !schedule) return;
+    const messageId = schedule.messageId;
+    setSchedule(null);
+    localStorage.removeItem(SCHEDULE_KEY);
+    setStatus({ ok: true, message: "Timer elapsed — checking whether it was delivered…" });
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/schedule/status?messageId=${encodeURIComponent(messageId)}`);
+        const data = (await res.json()) as {
+          error?: string;
+          state?: string;
+          summary?: string;
+          error_?: string;
+        } & { error?: string };
+        if (!res.ok) {
+          setStatus({ ok: false, message: data.error ?? "Could not check delivery status." });
+          return;
+        }
+        const delivered = data.state === "DELIVERED";
+        setStatus({
+          ok: delivered,
+          message: `${data.state ?? "UNKNOWN"} — ${data.summary ?? ""} Confirm in Keka.`,
+        });
+      } catch (err) {
+        setStatus({ ok: false, message: (err as Error).message });
+      }
+    })();
+  }, [remaining, schedule]);
 
   const saveToken = useCallback((value: string) => {
     setToken(value);
@@ -190,6 +214,33 @@ export default function Home() {
       setScheduling(false);
     }
   }, [autoMinutes, note, saveSchedule, token]);
+
+  const checkStatus = useCallback(async () => {
+    if (!schedule) return;
+    try {
+      const res = await fetch(
+        `/api/schedule/status?messageId=${encodeURIComponent(schedule.messageId)}`,
+      );
+      const data = (await res.json()) as {
+        error?: string;
+        state?: string;
+        summary?: string;
+        url?: string;
+      };
+      setStatus(
+        res.ok
+          ? {
+              ok: data.state !== "ERROR" && data.state !== "FAILED",
+              message: `${data.state ?? "UNKNOWN"} — ${data.summary ?? ""}${
+                data.url ? ` (callback: ${data.url})` : ""
+              }`,
+            }
+          : { ok: false, message: data.error ?? "Could not check status." },
+      );
+    } catch (err) {
+      setStatus({ ok: false, message: (err as Error).message });
+    }
+  }, [schedule]);
 
   const punch = useCallback(
     async (action: Action) => {
@@ -361,9 +412,14 @@ export default function Home() {
               <span className="schedTime">{formatCountdown(remaining)}</span>
               <span className="schedAt">at {formatTime(new Date(schedule.fireAt))}</span>
             </div>
-            <button className="link" onClick={() => cancelSchedule()} disabled={cancelling}>
-              {cancelling ? "cancelling…" : "cancel"}
-            </button>
+            <span className="schedActions">
+              <button className="link" onClick={checkStatus}>
+                check
+              </button>
+              <button className="link" onClick={() => cancelSchedule()} disabled={cancelling}>
+                {cancelling ? "cancelling…" : "cancel"}
+              </button>
+            </span>
           </div>
         )}
 
