@@ -1,5 +1,26 @@
-export const KEKA_URL =
-  "https://cloudanalogy.keka.com/k/dashboard/api/mytime/attendance/remoteclockin";
+export const DEFAULT_KEKA_BASE = "https://cloudanalogy.keka.com";
+const CLOCKIN_PATH = "/k/dashboard/api/mytime/attendance/remoteclockin";
+
+/**
+ * Turns user input ("acme.keka.com", "https://acme.keka.com/foo") into a bare
+ * origin. Only https hosts under keka.com are accepted — the server makes the
+ * request, so an arbitrary URL here would be an open proxy.
+ */
+export function resolveBaseUrl(raw: string | undefined | null): string {
+  const input = (raw ?? "").trim();
+  if (!input) return DEFAULT_KEKA_BASE;
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+  } catch {
+    throw new Error("Enter a valid Keka URL, e.g. https://yourcompany.keka.com");
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || !host.endsWith(".keka.com")) {
+    throw new Error("URL must be an https://<company>.keka.com address.");
+  }
+  return url.origin;
+}
 
 export type Action = "in" | "out";
 
@@ -33,7 +54,12 @@ export function tokenExpiryMs(token: string): number | null {
   }
 }
 
-export async function punch(token: string, action: Action, note = ""): Promise<PunchResult> {
+export async function punch(
+  token: string,
+  action: Action,
+  note = "",
+  baseUrl = DEFAULT_KEKA_BASE,
+): Promise<PunchResult> {
   const timestamp = new Date().toISOString();
   const payload = {
     timestamp,
@@ -46,15 +72,15 @@ export async function punch(token: string, action: Action, note = ""): Promise<P
 
   let response: Response;
   try {
-    response = await fetch(KEKA_URL, {
+    response = await fetch(`${baseUrl}${CLOCKIN_PATH}`, {
       method: "POST",
       headers: {
         accept: "application/json, text/plain, */*",
         "accept-language": "en-US,en;q=0.9,en-IN;q=0.8",
         authorization: `Bearer ${normalizeToken(token)}`,
         "content-type": "application/json; charset=UTF-8",
-        origin: "https://cloudanalogy.keka.com",
-        referer: "https://cloudanalogy.keka.com/",
+        origin: baseUrl,
+        referer: `${baseUrl}/`,
         "x-requested-with": "XMLHttpRequest",
         "user-agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",

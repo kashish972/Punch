@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { normalizeToken, punch } from "@/lib/keka";
+import { normalizeToken, punch, resolveBaseUrl } from "@/lib/keka";
 
 type PunchBody = {
   token?: string;
   action?: "in" | "out";
   note?: string;
+  baseUrl?: string;
 };
 
 export async function POST(request: Request) {
@@ -24,7 +25,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "action must be 'in' or 'out'." }, { status: 400 });
   }
 
-  const result = await punch(token, body.action, body.note ?? "");
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(body.baseUrl);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+  }
+
+  const result = await punch(token, body.action, body.note ?? "", baseUrl);
 
   if (!result.ok) {
     return NextResponse.json(

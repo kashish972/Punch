@@ -25,6 +25,8 @@ type Schedule = {
 const TOKEN_KEY = "keka.token";
 const LOG_KEY = "keka.log";
 const SCHEDULE_KEY = "keka.schedule";
+const URL_KEY = "keka.url";
+const DEFAULT_URL = "https://cloudanalogy.keka.com";
 
 const DURATIONS = [
   { label: "4h", minutes: 240 },
@@ -96,6 +98,7 @@ function formatCountdown(ms: number) {
 
 export default function Home() {
   const [token, setToken] = useState("");
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_URL);
   const [note, setNote] = useState("");
   const [pending, setPending] = useState<Action | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
@@ -110,6 +113,7 @@ export default function Home() {
 
   useEffect(() => {
     setToken(localStorage.getItem(TOKEN_KEY) ?? "");
+    setBaseUrl(localStorage.getItem(URL_KEY) || DEFAULT_URL);
     try {
       setLog(JSON.parse(localStorage.getItem(LOG_KEY) ?? "[]") as LogEntry[]);
     } catch {
@@ -187,6 +191,11 @@ export default function Home() {
     localStorage.setItem(TOKEN_KEY, value);
   }, []);
 
+  const saveBaseUrl = useCallback((value: string) => {
+    setBaseUrl(value);
+    localStorage.setItem(URL_KEY, value);
+  }, []);
+
   const saveSchedule = useCallback((next: Schedule | null) => {
     setSchedule(next);
     if (next) localStorage.setItem(SCHEDULE_KEY, JSON.stringify(next));
@@ -239,7 +248,7 @@ export default function Home() {
       const res = await fetch("/api/schedule", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, minutes: autoMinutes, note }),
+        body: JSON.stringify({ token, minutes: autoMinutes, note, baseUrl }),
       });
       const data = (await res.json()) as { error?: string; messageId?: string; fireAt?: string };
       if (res.ok && data.messageId && data.fireAt) {
@@ -256,7 +265,7 @@ export default function Home() {
     } finally {
       setScheduling(false);
     }
-  }, [autoMinutes, note, saveSchedule, token]);
+  }, [autoMinutes, baseUrl, note, saveSchedule, token]);
 
   const checkStatus = useCallback(async () => {
     if (!schedule) return;
@@ -284,7 +293,7 @@ export default function Home() {
         const res = await fetch("/api/punch", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ token, action, note }),
+          body: JSON.stringify({ token, action, note, baseUrl }),
         });
         const data = (await res.json()) as { error?: string; timestamp?: string };
         const ok = res.ok;
@@ -296,7 +305,7 @@ export default function Home() {
           const scheduled = await fetch("/api/schedule", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ token, minutes: autoMinutes, note }),
+            body: JSON.stringify({ token, minutes: autoMinutes, note, baseUrl }),
           });
           const sData = (await scheduled.json()) as {
             error?: string;
@@ -324,7 +333,7 @@ export default function Home() {
         setPending(null);
       }
     },
-    [appendLog, autoEnabled, autoMinutes, cancelSchedule, note, saveSchedule, schedule, token],
+    [appendLog, autoEnabled, autoMinutes, baseUrl, cancelSchedule, note, saveSchedule, schedule, token],
   );
 
   const clearLog = useCallback(() => {
@@ -338,10 +347,23 @@ export default function Home() {
         <header className="head">
           <div>
             <h1>Keka Remote Punch</h1>
-            <p className="sub">cloudanalogy.keka.com</p>
+            <p className="sub">{baseUrl.replace(/^https?:\/\//i, "") || "cloudanalogy.keka.com"}</p>
           </div>
           <div className="clock">{now ? formatTime(now) : "--:--:--"}</div>
         </header>
+
+        <label className="label" htmlFor="baseUrl">
+          Keka URL
+        </label>
+        <input
+          id="baseUrl"
+          className="note"
+          spellCheck={false}
+          value={baseUrl}
+          placeholder={DEFAULT_URL}
+          onChange={(e) => saveBaseUrl(e.target.value)}
+          onBlur={() => !baseUrl.trim() && saveBaseUrl(DEFAULT_URL)}
+        />
 
         <label className="label" htmlFor="token">
           Bearer token

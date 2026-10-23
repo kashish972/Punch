@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { seal } from "@/lib/crypto";
-import { normalizeToken, tokenExpiryMs } from "@/lib/keka";
+import { normalizeToken, resolveBaseUrl, tokenExpiryMs } from "@/lib/keka";
 import { bypassHeaders, callbackUrl, qstashClient } from "@/lib/qstash";
 
 /** Guard rails: at least a minute out, at most a working day and a half. */
@@ -14,6 +14,7 @@ type ScheduleBody = {
   token?: string;
   minutes?: number;
   note?: string;
+  baseUrl?: string;
 };
 
 export async function POST(request: Request) {
@@ -27,6 +28,13 @@ export async function POST(request: Request) {
   const token = normalizeToken(body.token);
   if (!token) {
     return NextResponse.json({ error: "Token is required." }, { status: 400 });
+  }
+
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(body.baseUrl);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
   }
 
   const minutes = Number(body.minutes);
@@ -65,7 +73,7 @@ export async function POST(request: Request) {
   try {
     const published = await qstashClient().publishJSON({
       url,
-      body: { token: seal(token), note: body.note ?? "", scheduledFor: fireAt },
+      body: { token: seal(token), note: body.note ?? "", baseUrl, scheduledFor: fireAt },
       notBefore: Math.floor(fireAt / 1000),
       retries: 3,
       headers: bypassHeaders(),

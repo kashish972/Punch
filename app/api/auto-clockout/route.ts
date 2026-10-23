@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { open } from "@/lib/crypto";
-import { punch } from "@/lib/keka";
+import { punch, resolveBaseUrl } from "@/lib/keka";
 import { callbackUrl, qstashReceiver } from "@/lib/qstash";
 
 type CallbackBody = {
   token?: string;
   note?: string;
+  baseUrl?: string;
   scheduledFor?: number;
 };
 
@@ -51,7 +52,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not decrypt token." }, { status: 200 });
   }
 
-  const result = await punch(token, "out", body.note ?? "");
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(body.baseUrl);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 200 });
+  }
+
+  const result = await punch(token, "out", body.note ?? "", baseUrl);
 
   if (!result.ok) {
     console.error("[auto-clockout] punch failed:", result.status, result.error);
